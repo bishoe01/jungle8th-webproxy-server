@@ -1,21 +1,17 @@
-/* $begin tinymain */
-/*
- * tiny.c - A simple, iterative HTTP/1.0 Web server that uses the
- *     GET method to serve static and dynamic content.
- *
- * Updated 11/2019 droh
- *   - Fixed sprintf() aliasing issue in serve_static(), and clienterror().
- */
-#include "csapp.h"
+#include <stdio.h>
 
-void doit(int fd);
+#include "csapp.h"
+void doit(int fd);  // 클라이언트의 요청을 받아 분석하고, 정적 또는 동적 컨텐츠를 제공
+// fd: 클라이언트와 연결된 파일 디스크립터입니다.
 void read_requesthdrs(rio_t *rp);
-int parse_uri(char *uri, char *filename, char *cgiargs);
-void serve_static(int fd, char *filename, int filesize);
+// HTTP 요청의 헤더들을 읽어들이는 함수입니다.
+// 요청 라인을 제외한 나머지 헤더들을 읽어들입니다.
+
+int parse_uri(char *uri, char *filename, char *cgiargs);  // HTTP 요청의 URI를 파싱하는 함수입니다. URI에서 파일 경로, CGI 인자 등을 추출합니다.
 void get_filetype(char *filename, char *filetype);
-void serve_dynamic(int fd, char *filename, char *cgiargs);
-void clienterror(int fd, char *cause, char *errnum, char *shortmsg,
-                 char *longmsg);
+void serve_static(int fd, char *filename, int filesize);                             // 정적 컨텐츠를 클라이언트에게 제공하는 함수입니다.
+void serve_dynamic(int fd, char *filename, char *cgiargs);                           // 동적 컨텐츠를 클라이언트에게 제공하는 함수입니다.
+void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);  // clienterror - 클라이언트에게 오류 메시지를 전송하는 함수입니다.
 
 int main(int argc, char **argv) {
     int listenfd, connfd;
@@ -25,6 +21,9 @@ int main(int argc, char **argv) {
 
     /* Check command line args */
     if (argc != 2) {
+        // test printing any string to stderr
+        printf("usage: <port> sdsdsdsdsdsdsd\n");
+
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
     }
@@ -158,10 +157,14 @@ void serve_static(int fd, char *filename, int filesize) {
     printf("%s", buf);
     /* Send response body to client */
     srcfd = Open(filename, O_RDONLY, 0);
-    srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    // srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
+    // malloc
+    srcp = (char *)malloc(filesize);
+    Rio_readn(srcfd, srcp, filesize);
     Close(srcfd);
     Rio_writen(fd, srcp, filesize);
-    Munmap(srcp, filesize);
+    // Munmap(srcp, filesize);
+    free(srcp);
 }
 
 void get_filetype(char *filename, char *filetype) {
@@ -173,6 +176,8 @@ void get_filetype(char *filename, char *filetype) {
         strcpy(filetype, "image/png");
     else if (strstr(filename, ".jpg"))
         strcpy(filetype, "image/jpeg");
+    else if (strstr(filename, ".mp4"))
+        strcpy(filetype, "video/mp4");
     else
         strcpy(filetype, "text/plain");
 }
