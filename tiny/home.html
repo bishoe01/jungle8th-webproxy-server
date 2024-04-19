@@ -1,7 +1,32 @@
-<html>
-<head><title>test</title></head>
-<body> 
-<img align="middle" src="godzilla.gif">
-Dave O'Hallaron
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <img align="middle" src="godzilla.gif">
+    Dave O'Hallaron
+    <form onsubmit="onSubmit(event)">
+        <input type="text" name="btn1" id="btn1" placeholder="type btn">
+        <input type="text" name="btn2" id="btn2" placeholder="type btn">
+        <button type="submit">enter</button>
+    </form>
+    <script>
+        function onSubmit(e) {
+            e.preventDefault();
+            let btn1 = document.getElementById("btn1").value;
+            let btn2 = document.getElementById("btn2").value;
+            // if ((btn1 === "" || btn2 === "") || (typeof btn1 !== "number" || typeof btn2 !== "number")) {
+            //     alert("버튼아님");
+            //     return;
+            // }
+            window.location.href = `http://localhost:8000/cgi-bin/adder?${btn1}&${btn2}`;
+        }
+    </script>
 </body>
+
 </html>
