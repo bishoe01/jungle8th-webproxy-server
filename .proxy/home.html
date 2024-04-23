@@ -8,8 +8,12 @@
 </head>
 
 <body>
-    <img align="middle" src="godzilla.gif">
+    <img style="width: 240px; height: 240px;" align="middle" src="BMO.jpeg">
     Dave O'Hallaron
+    <!-- <video width="320" height="240" controls>
+        <source src="play.mp4" type="video/mp4">
+        Your browser does not support the video tag.
+    </video> -->
     <form onsubmit="onSubmit(event)">
         <input type="text" name="btn1" id="btn1" placeholder="type btn">
         <input type="text" name="btn2" id="btn2" placeholder="type btn">
@@ -18,8 +22,8 @@
     <script>
         function onSubmit(e) {
             e.preventDefault();
-            var btn1 = document.getElementById('btn1').value;
-            var btn2 = document.getElementById('btn2').value;
+            var btn1 = parseInt(document.getElementById('btn1').value);
+            var btn2 = parseInt(document.getElementById('btn2').value);
 
             if ((btn1 === "" || btn2 === "") && (typeof btn1 !== "number" || typeof btn2 !== "number")) {
                 alert("입력");

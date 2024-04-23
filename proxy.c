@@ -1,5 +1,8 @@
+#include <pthread.h>
+#include <semaphore.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "csapp.h"
 /* Recommended max cache and object sizes */
@@ -14,7 +17,110 @@ int parse_uri(char *uri, char *hostname, char *port, char *path);  // HTTP 요�
 void read_requesthdrs(rio_t *rp);
 void doit(int clientfd);
 void *thread(void *vargp);
+long parse_content_length(const char *str);
+// cache structure
+typedef struct cache {
+    char uri[MAXLINE];
+    char *object;  // char 배열 대신 char 포인터를 사용
+    struct cache *next;
+    struct cache *prev;
+    int size;
+} cache;
+
+//  cache_size = 0;  // NOTE 상수 int
+long cache_size = 0;
+cache *head = NULL;
+cache *tail = NULL;
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void cache_insert(char *uri, char *object, int size) {
+    pthread_mutex_lock(&mutex);
+    if (cache_size + size > MAX_CACHE_SIZE) {
+        cache_evict(cache_size + size - MAX_CACHE_SIZE);
+    }
+
+    cache *new_item = Malloc(sizeof(cache));
+    new_item->object = Malloc(size);
+    memcpy(new_item->object, object, size);
+    strcpy(new_item->uri, uri);
+    new_item->size = size;
+    new_item->next = NULL;
+    new_item->prev = tail;
+
+    if (tail != NULL) {
+        tail->next = new_item;
+    } else {
+        head = new_item;
+    }
+    tail = new_item;
+    cache_size += size;
+
+    pthread_mutex_unlock(&mutex);
+}
+
+void cache_evict(int size_needed) {
+    while (size_needed > 0 && head != NULL) {
+        cache_size -= head->size;
+        size_needed -= head->size;
+        cache_remove(head);
+    }
+}
+
+cache *cache_find(const char *uri) {
+    pthread_mutex_lock(&mutex);
+    cache *current = head;
+    while (current != NULL) {
+        if (strcmp(current->uri, uri) == 0) {
+            // Move to front to maintain LRU order
+            if (current != tail) {
+                if (current->prev) {
+                    current->prev->next = current->next;
+                }
+                if (current->next) {
+                    current->next->prev = current->prev;
+                }
+                if (head == current) {
+                    head = current->next;
+                }
+                current->next = NULL;
+                current->prev = tail;
+                if (tail) {
+                    tail->next = current;
+                }
+                tail = current;
+            }
+            pthread_mutex_unlock(&mutex);
+            return current;
+        }
+        current = current->next;
+    }
+    pthread_mutex_unlock(&mutex);
+    return NULL;
+}
+
+void cache_remove(cache *item) {
+    if (item->prev) {
+        item->prev->next = item->next;
+    }
+    if (item->next) {
+        item->next->prev = item->prev;
+    }
+    if (item == head) {
+        head = item->next;
+    }
+    if (item == tail) {
+        tail = item->prev;
+    }
+    Free(item->object);
+    Free(item);
+}
+
 int main(int argc, char **argv) {
+    volatile int cnt = 0;
+    sem_t mutex, w;
+    Sem_init(&mutex, 0, 1);
+
     int listenfd, *clientfd;
     char client_hostname[MAXLINE], client_port[MAXLINE];
     socklen_t clientlen;
@@ -26,13 +132,16 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
     }
-
+    signal(SIGPIPE, SIG_IGN);           // broken pipe 에러 해결용 코드 -프로세스 전체에 대한 시그널 핸들러 설정
     listenfd = Open_listenfd(argv[1]);  // 전달받은 포트 번호를 사용해 수신 소켓 생성
     while (1) {
         clientlen = sizeof(clientaddr);
         clientfd = Malloc(sizeof(int));
+
         *clientfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);  // 클라이언트 연결 요청 수신
+
         Getnameinfo((SA *)&clientaddr, clientlen, client_hostname, MAXLINE, client_port, MAXLINE, 0);
+
         printf("Accepted connection from (%s, %s)\n", client_hostname, client_port);
         Pthread_create(&tid, NULL, thread, clientfd);
     }
@@ -45,46 +154,67 @@ void *thread(void *vargp) {
     Close(clientfd);
     return NULL;
 }
+
 void doit(int clientfd) {
-    char port[MAXLINE], buf[MAXLINE], method[MAXLINE], uri[MAXLINE], path[MAXLINE], hostname[MAXLINE];
+    char port[MAXLINE], buf[MAX_OBJECT_SIZE], method[MAXLINE], uri[MAXLINE], path[MAXLINE], hostname[MAXLINE];
     rio_t rio;
+    int temp_cache_size = 0;
+    char *temp_cache = Malloc(MAX_OBJECT_SIZE);
+    if (temp_cache == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return;
+    }
 
     Rio_readinitb(&rio, clientfd);
-    Rio_readlineb(&rio, buf, MAXLINE);
-    printf("Request line: %s\n", buf);  // 요청 라인 출력
-    sscanf(buf, "%s %s", method, uri);
-    printf("Method: %s, URI: %s\n", method, uri);  // 메소드와 URI 출력
-
-    if (!strcasecmp(uri, "/favicon.ico"))
+    if (!Rio_readlineb(&rio, buf, MAXLINE)) {
+        Free(temp_cache);
         return;
+    }
+
+    sscanf(buf, "%s %s", method, uri);
+    if (!strcasecmp(uri, "/favicon.ico")) {
+        Free(temp_cache);
+        return;
+    }
+
+    cache *cache_item = cache_find(uri);
+    if (cache_item) {
+        Rio_writen(clientfd, cache_item->object, cache_item->size);
+        printf("Cache hit for %s\n", uri);
+        Free(temp_cache);
+        return;
+    }
+
     parse_uri(uri, hostname, port, path);
-    printf("Parsed hostname: %s, Port: %s, Path: %s\n", hostname, port, path);  // 파싱 결과 출력
-
-    sprintf(buf, "%s %s %s\r\n", method, path, "HTTP/1.0");
-    printf("%s\n", buf);
-    sprintf(buf, "%sConnection: close\r\n", buf);
-    sprintf(buf, "%sProxy-Connection: close\r\n", buf);
-    sprintf(buf, "%s%s\r\n", buf, user_agent_hdr);
-
+    sprintf(buf, "%s %s %s\r\nConnection: close\r\nProxy-Connection: close\r\n%s\r\n", method, path, "HTTP/1.0", user_agent_hdr);
     int serverfd = Open_clientfd(hostname, port);
-    printf("%s\n", buf);
     Rio_writen(serverfd, buf, strlen(buf));
     Rio_readinitb(&rio, serverfd);
     ssize_t n;
     while ((n = Rio_readlineb(&rio, buf, MAXLINE)) > 0) {
-        printf("%s\n", buf);
         Rio_writen(clientfd, buf, n);
-        if (strcmp(buf, "\r\n") == 0) {
-            break;  // 응답 헤더 끝
-        }
+        if (strcmp(buf, "\r\n") == 0) break;  // End of headers
     }
 
-    /* 응답 본문 전송 */
-    while ((n = Rio_readlineb(&rio, buf, MAX_OBJECT_SIZE)) > 0) {
+    // Cache the response body if possible
+    while ((n = Rio_readnb(&rio, buf, MAX_OBJECT_SIZE)) > 0) {
+        if (temp_cache_size + n <= MAX_OBJECT_SIZE) {
+            memcpy(temp_cache + temp_cache_size, buf, n);
+            temp_cache_size += n;
+        }
         Rio_writen(clientfd, buf, n);
     }
+    // print temp_cache
+
+    if (temp_cache_size < MAX_OBJECT_SIZE) {
+        printf("Caching %s\n", uri);  // Cache the response body if possible
+        cache_insert(uri, temp_cache, temp_cache_size);
+    }
+
+    Free(temp_cache);
     Close(serverfd);
 }
+
 int parse_uri(char *uri, char *hostname, char *port, char *path) {
     // 프로토콜 제거 (http:// 또는 https://)
 
@@ -122,4 +252,24 @@ void read_requesthdrs(rio_t *rp) {
         printf("%s", buf);
     }
     return;
+}
+
+long parse_content_length(const char *str) {
+    long content_length = 0;
+    int found_digit = 0;  // 숫자를 찾았는지 여부를 나타내는 플래그
+
+    // 문자열을 처음부터 끝까지 반복
+    for (; *str != '\0'; str++) {
+        // 숫자인 경우
+        if (isdigit(*str)) {
+            found_digit = 1;  // 숫자를 찾았음을 표시
+            // 현재 숫자를 누적하여 content_length에 추가
+            content_length = content_length * 10 + (*str - '0');
+        } else if (found_digit) {
+            // 숫자를 찾았으나 숫자가 아닌 문자가 나타난 경우, 반복 종료
+            break;
+        }
+    }
+
+    return content_length;
 }
