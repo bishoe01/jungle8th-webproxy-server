@@ -6,7 +6,7 @@
 
 int main(void) {
     char *buf, *p;
-    char arg1[MAXLINE], arg2[MAXLINE], content[MAXLINE];
+    char arg1[MAXLINE], arg2[MAXLINE], content[MAXLINE], method[MAXLINE];
     int n1 = 0, n2 = 0;
 
     /* Extract the two arguments */
@@ -31,8 +31,10 @@ int main(void) {
     printf("Connection: close\r\n");
     printf("Content-length: %d\r\n", (int)strlen(content));
     printf("Content-type: text/html\r\n\r\n");
-    printf("%s", content);
-    fflush(stdout);
+    if (strcasecmp(getenv("REQUEST_METHOD"), "GET") == 0) {
+        printf("%s\n", content);
+    }
+    fflush(stdout);  // 출력 버퍼 비움
 
     exit(0);
 }

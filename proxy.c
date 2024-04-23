@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdio.h>
 
 #include "csapp.h"
@@ -11,11 +12,14 @@ static const char *user_agent_hdr =
     "Firefox/10.0.3\r\n";
 int parse_uri(char *uri, char *hostname, char *port, char *path);  // HTTP 요청의 URI를 파싱하는 함수입니다. URI에서 파일 경로, CGI 인자 등을 추출합니다.
 void read_requesthdrs(rio_t *rp);
+void doit(int clientfd);
+void *thread(void *vargp);
 int main(int argc, char **argv) {
-    int listenfd, clientfd;
+    int listenfd, *clientfd;
     char client_hostname[MAXLINE], client_port[MAXLINE];
     socklen_t clientlen;
     struct sockaddr_storage clientaddr;
+    pthread_t tid;
 
     /* Check command line args */
     if (argc != 2) {
@@ -26,12 +30,20 @@ int main(int argc, char **argv) {
     listenfd = Open_listenfd(argv[1]);  // 전달받은 포트 번호를 사용해 수신 소켓 생성
     while (1) {
         clientlen = sizeof(clientaddr);
-        clientfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);  // 클라이언트 연결 요청 수신
+        clientfd = Malloc(sizeof(int));
+        *clientfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);  // 클라이언트 연결 요청 수신
         Getnameinfo((SA *)&clientaddr, clientlen, client_hostname, MAXLINE, client_port, MAXLINE, 0);
         printf("Accepted connection from (%s, %s)\n", client_hostname, client_port);
-        doit(clientfd);
-        Close(clientfd);
+        Pthread_create(&tid, NULL, thread, clientfd);
     }
+}
+void *thread(void *vargp) {
+    int clientfd = *((int *)vargp);
+    Pthread_detach(pthread_self());
+    Free(vargp);
+    doit(clientfd);
+    Close(clientfd);
+    return NULL;
 }
 void doit(int clientfd) {
     char port[MAXLINE], buf[MAXLINE], method[MAXLINE], uri[MAXLINE], path[MAXLINE], hostname[MAXLINE];
@@ -43,6 +55,8 @@ void doit(int clientfd) {
     sscanf(buf, "%s %s", method, uri);
     printf("Method: %s, URI: %s\n", method, uri);  // 메소드와 URI 출력
 
+    if (!strcasecmp(uri, "/favicon.ico"))
+        return;
     parse_uri(uri, hostname, port, path);
     printf("Parsed hostname: %s, Port: %s, Path: %s\n", hostname, port, path);  // 파싱 결과 출력
 
@@ -74,9 +88,9 @@ void doit(int clientfd) {
 int parse_uri(char *uri, char *hostname, char *port, char *path) {
     // 프로토콜 제거 (http:// 또는 https://)
 
-        char *protocol_end = strstr(uri, "://");
+    char *protocol_end = strstr(uri, "://");
+    // NOTE - uri가 /로 시작할때는 uri+1
     char *host_start = (protocol_end) ? protocol_end + 3 : uri + 1;
-
     char *port_ptr = strchr(host_start + 1, ':');
     char *path_ptr = strchr(host_start + 1, '/');
 
