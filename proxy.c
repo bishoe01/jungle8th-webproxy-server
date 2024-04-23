@@ -23,7 +23,6 @@ typedef struct cache {
     char uri[MAXLINE];
     char *object;  // char 배열 대신 char 포인터를 사용
     struct cache *next;
-    struct cache *prev;
     int size;
 } cache;
 
@@ -33,88 +32,6 @@ cache *head = NULL;
 cache *tail = NULL;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
-void cache_insert(char *uri, char *object, int size) {
-    pthread_mutex_lock(&mutex);
-    if (cache_size + size > MAX_CACHE_SIZE) {
-        cache_evict(cache_size + size - MAX_CACHE_SIZE);
-    }
-
-    cache *new_item = Malloc(sizeof(cache));
-    new_item->object = Malloc(size);
-    memcpy(new_item->object, object, size);
-    strcpy(new_item->uri, uri);
-    new_item->size = size;
-    new_item->next = NULL;
-    new_item->prev = tail;
-
-    if (tail != NULL) {
-        tail->next = new_item;
-    } else {
-        head = new_item;
-    }
-    tail = new_item;
-    cache_size += size;
-
-    pthread_mutex_unlock(&mutex);
-}
-
-void cache_evict(int size_needed) {
-    while (size_needed > 0 && head != NULL) {
-        cache_size -= head->size;
-        size_needed -= head->size;
-        cache_remove(head);
-    }
-}
-
-cache *cache_find(const char *uri) {
-    pthread_mutex_lock(&mutex);
-    cache *current = head;
-    while (current != NULL) {
-        if (strcmp(current->uri, uri) == 0) {
-            // Move to front to maintain LRU order
-            if (current != tail) {
-                if (current->prev) {
-                    current->prev->next = current->next;
-                }
-                if (current->next) {
-                    current->next->prev = current->prev;
-                }
-                if (head == current) {
-                    head = current->next;
-                }
-                current->next = NULL;
-                current->prev = tail;
-                if (tail) {
-                    tail->next = current;
-                }
-                tail = current;
-            }
-            pthread_mutex_unlock(&mutex);
-            return current;
-        }
-        current = current->next;
-    }
-    pthread_mutex_unlock(&mutex);
-    return NULL;
-}
-
-void cache_remove(cache *item) {
-    if (item->prev) {
-        item->prev->next = item->next;
-    }
-    if (item->next) {
-        item->next->prev = item->prev;
-    }
-    if (item == head) {
-        head = item->next;
-    }
-    if (item == tail) {
-        tail = item->prev;
-    }
-    Free(item->object);
-    Free(item);
-}
 
 int main(int argc, char **argv) {
     volatile int cnt = 0;
@@ -177,14 +94,6 @@ void doit(int clientfd) {
         return;
     }
 
-    cache *cache_item = cache_find(uri);
-    if (cache_item) {
-        Rio_writen(clientfd, cache_item->object, cache_item->size);
-        printf("Cache hit for %s\n", uri);
-        Free(temp_cache);
-        return;
-    }
-
     parse_uri(uri, hostname, port, path);
     sprintf(buf, "%s %s %s\r\nConnection: close\r\nProxy-Connection: close\r\n%s\r\n", method, path, "HTTP/1.0", user_agent_hdr);
     int serverfd = Open_clientfd(hostname, port);
@@ -195,20 +104,9 @@ void doit(int clientfd) {
         Rio_writen(clientfd, buf, n);
         if (strcmp(buf, "\r\n") == 0) break;  // End of headers
     }
-
     // Cache the response body if possible
     while ((n = Rio_readnb(&rio, buf, MAX_OBJECT_SIZE)) > 0) {
-        if (temp_cache_size + n <= MAX_OBJECT_SIZE) {
-            memcpy(temp_cache + temp_cache_size, buf, n);
-            temp_cache_size += n;
-        }
         Rio_writen(clientfd, buf, n);
-    }
-    // print temp_cache
-
-    if (temp_cache_size < MAX_OBJECT_SIZE) {
-        printf("Caching %s\n", uri);  // Cache the response body if possible
-        cache_insert(uri, temp_cache, temp_cache_size);
     }
 
     Free(temp_cache);
