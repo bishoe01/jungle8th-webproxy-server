@@ -17,7 +17,6 @@ typedef struct cache {
     int size;
 } cache;
 
-//  cache_size = 0;  // NOTE 상수 int
 long cache_size = 0;
 cache *head = NULL;
 cache *tail = NULL;
@@ -35,8 +34,6 @@ long parse_content_length(const char *str);
 cache *cache_find(const char *uri);
 void cache_insert(const char *uri, char *port, char *path, char *object, int size);
 void cache_remove(cache *cache_item);
-
-// cache structure
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -117,16 +114,17 @@ void doit(int clientfd) {
     Rio_writen(serverfd, buf, strlen(buf));
     Rio_readinitb(&rio, serverfd);
     ssize_t n;
+
     while ((n = Rio_readlineb(&rio, buf, MAX_OBJECT_SIZE)) > 0) {
         Rio_writen(clientfd, buf, n);
         if (temp_cache_size + n <= MAX_OBJECT_SIZE) {
-            memcpy(temp_cache, buf, n);
+            memcpy(temp_cache + temp_cache_size, buf, n);
             temp_cache_size += n;
         }
     }
+
     if (temp_cache_size > 0 && temp_cache_size <= MAX_OBJECT_SIZE) {
-        // print port
-        printf("Port: %s\n", port);
+        printf("Port: %s\n", port);  // Debugging output
         cache_insert(uri, port, path, temp_cache, temp_cache_size);
     } else {
         Free(temp_cache);
@@ -211,40 +209,6 @@ cache *cache_find(const char *uri) {
     return NULL;
 }
 
-// void cache_insert(const char *uri, char *port, char *path, char *object, int size) {
-//     pthread_mutex_lock(&mutex);
-//     if (cache_size + size > MAX_CACHE_SIZE) {
-//         while (cache_size + size > MAX_CACHE_SIZE) {
-//             cache_remove(tail);
-//         }
-//     }
-
-//     cache *new_cache = Malloc(sizeof(cache));
-//     if (new_cache == NULL) {
-//         fprintf(stderr, "Memory allocation failed\n");
-//         pthread_mutex_unlock(&mutex);
-//         return;
-//     }
-
-//     strcpy(new_cache->uri, uri);
-//     new_cache->object = object;
-//     new_cache->size = size;
-//     new_cache->next = head;
-//     new_cache->prev = NULL;
-
-//     // printf cache uri
-//     printf("Cache uri: %s\n", new_cache->uri);
-//     if (head != NULL) {
-//         head->prev = new_cache;
-//     }
-//     head = new_cache;
-//     if (tail == NULL) {
-//         tail = new_cache;
-//     }
-//     cache_size += size;
-
-//     pthread_mutex_unlock(&mutex);
-// }
 void cache_insert(const char *hostname, char *port, char *path, char *object, int size) {
     pthread_mutex_lock(&mutex);
 
